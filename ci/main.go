@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"dagger.io/dagger"
 )
@@ -56,5 +57,46 @@ func build(ctx context.Context, client *dagger.Client) error {
 	}
 
 	fmt.Println("Build successful!")
+
+	registry := os.Getenv("REGISTRY")
+	if registry == "" {
+		registry = "ghcr.io"
+	}
+
+	repoOwner := os.Getenv("GITHUB_REPOSITORY_OWNER")
+	repoName := os.Getenv("GITHUB_REPOSITORY")
+	if repoName != "" {
+		parts := strings.Split(repoName, "/")
+		if len(parts) == 2 {
+			repoName = parts[1]
+		}
+	}
+
+	if repoOwner == "" || repoName == "" {
+		fmt.Println("Skipping push: GITHUB_REPOSITORY_OWNER or GITHUB_REPOSITORY not set")
+		return nil
+	}
+
+	imageRef := fmt.Sprintf("%s/%s/%s:latest", registry, strings.ToLower(repoOwner), repoName)
+
+	githubToken := os.Getenv("GITHUB_TOKEN")
+	if githubToken == "" {
+		fmt.Println("Skipping push: GITHUB_TOKEN not set")
+		return nil
+	}
+
+	fmt.Printf("Pushing image to %s...\n", imageRef)
+
+	registrySecret := client.SetSecret("github-token", githubToken)
+
+	publishedRef, err := finalImage.
+		WithRegistryAuth(registry, repoOwner, registrySecret).
+		Publish(ctx, imageRef)
+
+	if err != nil {
+		return fmt.Errorf("failed to push image: %w", err)
+	}
+
+	fmt.Printf("Successfully pushed image: %s\n", publishedRef)
 	return nil
 }
